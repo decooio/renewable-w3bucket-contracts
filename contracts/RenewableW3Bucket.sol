@@ -37,6 +37,8 @@ contract RenewableW3Bucket is
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
 
+    CountersUpgradeable.Counter private _tokenIdCounter;
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -55,7 +57,7 @@ contract RenewableW3Bucket is
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(PAUSER_ROLE, msg.sender);
         _grantRole(UPGRADER_ROLE, msg.sender);
-        _grantRole(EDITIONS_ADMIN_ROLE, msg.sender);
+        _grantRole(PRICE_ADMIN_ROLE, msg.sender);
         _grantRole(WITHDRAWER_ROLE, msg.sender);
     }
 
@@ -77,6 +79,42 @@ contract RenewableW3Bucket is
 
     function unpause() public onlyRole(PAUSER_ROLE) {
         _unpause();
+    }
+
+    function mint(
+        address to,
+        string calldata uri
+    ) external virtual nonReentrant {
+        uint256 tokenId = _tokenIdCounter.current();
+        _tokenIdCounter.increment();
+
+        _safeMint(to, tokenId);
+        _setTokenURI(tokenId, uri);
+
+        emit PermanentURI(uri, tokenId);
+    }
+
+    function renewBucket(
+        uint256 tokenId,
+        address currency,
+        uint256 capacityUnits, // How many 10GBs
+        uint256 periodUnits // How many 1years
+    ) external virtual payable nonReentrant {
+        _requireMinted(tokenId);
+
+        _renewBucket(tokenId, currency, capacityUnits, periodUnits);
+    }
+
+    function safeRenewBucket(
+        uint256 tokenId,
+        address currency,
+        uint256 capacityUnits, // How many 10GBs
+        uint256 periodUnits // How many 1years
+    ) external virtual payable nonReentrant {
+        _requireMinted(tokenId);
+        require(ownerOf(tokenId) == _msgSender(), "ERC721: caller is not token owner");
+
+        _renewBucket(tokenId, currency, capacityUnits, periodUnits);
     }
     
     // The following functions are overrides required by Solidity.

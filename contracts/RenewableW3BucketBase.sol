@@ -9,16 +9,13 @@ import "@openzeppelin/contracts-upgradeable/access/AccessControlEnumerableUpgrad
 import "@openzeppelin/contracts-upgradeable/utils/CountersUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/structs/DoubleEndedQueueUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/structs/EnumerableMapUpgradeable.sol";
-// import "@openzeppelin/contracts-upgradeable/utils/structs/EnumerableSetUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/math/SafeMathUpgradeable.sol";
 
 import "./lib/CurrencyTransferLib.sol";
 
 abstract contract RenewableW3BucketBase is Initializable, AccessControlEnumerableUpgradeable {
-    // using EnumerableMapUpgradeable for EnumerableMapUpgradeable.UintToUintMap;
     using DoubleEndedQueueUpgradeable for DoubleEndedQueueUpgradeable.Bytes32Deque;
     using EnumerableMapUpgradeable for EnumerableMapUpgradeable.AddressToUintMap;
-    // using EnumerableSetUpgradeable for EnumerableSetUpgradeable.UintSet;
     using CountersUpgradeable for CountersUpgradeable.Counter;
 
     /// @dev Only PRICE_ADMIN_ROLE holders can set bucket unit price
@@ -47,14 +44,16 @@ abstract contract RenewableW3BucketBase is Initializable, AccessControlEnumerabl
         uint256 price;
     }
 
+    /**
+     * @notice  Information of a bucket renewal
+     */
     struct BucketRenewal {
         uint256 renewalId;
         uint256 tokenId;
         address currency;
-        uint256 uintPrice;
-        uint256 capacityUnits; // How many 10GB
+        uint256 unitPrice;
+        uint256 capacityUnits; // How many 10GBs
         uint256 periodUnits; // How many years
-        uint256 renewedExpirationTimestamp;
         address renewedBy;  // Renewed by whom
         uint256 renewedAt;  // Renewed when
     }
@@ -71,13 +70,13 @@ abstract contract RenewableW3BucketBase is Initializable, AccessControlEnumerabl
         uint256 indexed tokenId
     );
 
+    /// @notice Emitted when a bucket is renewed
     event BucketRenewed(
         uint256 indexed tokenId,
         address indexed currency,
         uint256 uintPrice,
         uint256 capacityUnits,
         uint256 periodUnits,
-        uint256 renewedExpirationTimestamp,
         address renewedBy
     );
 
@@ -103,15 +102,15 @@ abstract contract RenewableW3BucketBase is Initializable, AccessControlEnumerabl
     function _renewBucket(
         uint256 tokenId,
         address currency,
-        uint256 capacityUnits, // How many 10GB
+        uint256 capacityUnits, // How many 10GBs
         uint256 periodUnits // How many 1years
     ) internal virtual {
         require(_unitPrices.contains(currency), 'Invalid currency');
         require(capacityUnits > 0 && capacityUnits <= MAX_RENEWABLE_CAPACITY_UNITS, 'Invalid renewal capacity units');
         require(periodUnits > 0 && periodUnits <= MAX_RENEWABLE_PERIOD_UNITS, 'Invalid renewal period units');
 
-        uint256 uintPrice = _unitPrices.get(currency);
-        uint256 price = SafeMathUpgradeable.mul(SafeMathUpgradeable.mul(uintPrice, capacityUnits), periodUnits);
+        uint256 unitPrice = _unitPrices.get(currency);
+        uint256 price = SafeMathUpgradeable.mul(SafeMathUpgradeable.mul(unitPrice, capacityUnits), periodUnits);
         if (currency == CurrencyTransferLib.NATIVE_TOKEN) {
             require(msg.value == price, "Must send required price");
         }
@@ -119,14 +118,46 @@ abstract contract RenewableW3BucketBase is Initializable, AccessControlEnumerabl
             CurrencyTransferLib.transferCurrency(currency, _msgSender(), address(this), price);
         }
 
-        
+        _nextRenewalId.increment();
+        uint256 renewalId = _nextRenewalId.current();
+
+        BucketRenewal memory bucketRenewal = BucketRenewal({
+            renewalId: renewalId,
+            tokenId: tokenId,
+            currency: currency,
+            unitPrice: unitPrice,
+            capacityUnits: capacityUnits,
+            periodUnits: periodUnits,
+            renewedBy: _msgSender(),
+            renewedAt: block.timestamp
+        });
+        _allRenewals[renewalId] = bucketRenewal;
+
+        DoubleEndedQueueUpgradeable.Bytes32Deque storage renewalHistory = _bucketRenewalHistory[tokenId];
+        renewalHistory.pushBack(bytes32(renewalId));
+
+        emit BucketRenewed(tokenId, currency, unitPrice, capacityUnits, periodUnits, _msgSender());
     }
 
-    function setUnitPrices(UnitPrice[] calldata prices)
-        external
-        virtual
-        onlyRole(PRICE_ADMIN_ROLE) 
-    {
+    function bucketRenewalCount(
+        uint256 tokenId
+    ) public virtual view returns (uint256) {
+        return _bucketRenewalHistory[tokenId].length();
+    }
+
+    function renewalOfBucketByIndex(
+        uint256 tokenId, uint256 index
+    ) public view virtual returns (BucketRenewal memory) {
+        require(index < bucketRenewalCount(tokenId), "Renewal index out of bounds");
+
+        DoubleEndedQueueUpgradeable.Bytes32Deque storage renewalHistory = _bucketRenewalHistory[tokenId];
+        uint256 renewalId = uint256(renewalHistory.at(index));
+        return _allRenewals[renewalId];
+    }
+
+    function setUnitPrices(
+        UnitPrice[] calldata prices
+    ) external virtual onlyRole(PRICE_ADMIN_ROLE) {
         for (uint256 i = 0; i < _unitPrices.length(); ) {
             (address key, ) = _unitPrices.at(i);
             _unitPrices.remove(key);
@@ -134,17 +165,11 @@ abstract contract RenewableW3BucketBase is Initializable, AccessControlEnumerabl
 
         for (uint256 i = 0; i < prices.length; i++) {
             _unitPrices.set(prices[i].currency, prices[i].price);
-
             emit UnitPriceUpdated(prices[i].currency, prices[i].price);
         }
     }
 
-    function getUnitPrices()
-        public
-        virtual
-        view
-        returns (UnitPrice[] memory)
-    {
+    function getUnitPrices() public virtual view returns (UnitPrice[] memory) {
         UnitPrice[] memory prices = new UnitPrice[](_unitPrices.length());
         for (uint256 i = 0; i < _unitPrices.length(); i++) {
             (address key, uint256 price) = _unitPrices.at(i);
@@ -157,11 +182,9 @@ abstract contract RenewableW3BucketBase is Initializable, AccessControlEnumerabl
     /**
      * @dev Withdraw native token or erc20 tokens from the contract
      */
-    function withdraw(address to, address currency)
-        external
-        virtual
-        onlyRole(WITHDRAWER_ROLE) 
-    {
+    function withdraw(
+        address to, address currency
+    ) external virtual onlyRole(WITHDRAWER_ROLE) {
         uint256 amount = 0;
         if (currency == CurrencyTransferLib.NATIVE_TOKEN) {
             amount = address(this).balance;
