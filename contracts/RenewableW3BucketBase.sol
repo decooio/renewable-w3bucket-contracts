@@ -111,6 +111,7 @@ abstract contract RenewableW3BucketBase is Initializable, AccessControlEnumerabl
 
         uint256 unitPrice = _unitPrices.get(currency);
         uint256 price = SafeMathUpgradeable.mul(SafeMathUpgradeable.mul(unitPrice, capacityUnits), periodUnits);
+        // console.log('_renewBucket, price: %d', price);
         if (currency == CurrencyTransferLib.NATIVE_TOKEN) {
             require(msg.value == price, "Must send required price");
         }

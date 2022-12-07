@@ -83,8 +83,11 @@ contract RenewableW3Bucket is
 
     function mint(
         address to,
-        string calldata uri
-    ) external virtual nonReentrant {
+        string calldata uri,
+        address currency,
+        uint256 capacityUnits, // How many 10GBs
+        uint256 periodUnits // How many 1years
+    ) external virtual payable nonReentrant {
         uint256 tokenId = _tokenIdCounter.current();
         _tokenIdCounter.increment();
 
@@ -92,6 +95,8 @@ contract RenewableW3Bucket is
         _setTokenURI(tokenId, uri);
 
         emit PermanentURI(uri, tokenId);
+
+        _renewBucket(tokenId, currency, capacityUnits, periodUnits);
     }
 
     function renewBucket(
