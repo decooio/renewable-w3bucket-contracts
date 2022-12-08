@@ -88,6 +88,7 @@ contract RenewableW3Bucket is
         uint256 capacityUnits, // How many 10GBs
         uint256 periodUnits // How many 1years
     ) external virtual payable nonReentrant {
+        _requireNotPaused();
         uint256 tokenId = _tokenIdCounter.current();
         _tokenIdCounter.increment();
 
@@ -105,8 +106,8 @@ contract RenewableW3Bucket is
         uint256 capacityUnits, // How many 10GBs
         uint256 periodUnits // How many 1years
     ) external virtual payable nonReentrant {
+        _requireNotPaused();
         _requireMinted(tokenId);
-
         _renewBucket(tokenId, currency, capacityUnits, periodUnits);
     }
 
@@ -116,6 +117,7 @@ contract RenewableW3Bucket is
         uint256 capacityUnits, // How many 10GBs
         uint256 periodUnits // How many 1years
     ) external virtual payable nonReentrant {
+        _requireNotPaused();
         _requireMinted(tokenId);
         require(ownerOf(tokenId) == _msgSender(), "ERC721: caller is not token owner");
 
